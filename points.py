@@ -24,6 +24,14 @@ basis_vectors = np.diag(np.ones(9))
 
 
 def get_ice_points():
+    """
+        This is used to load in all the points that lie on the ellipsoidal likelihood contour 
+
+        It's a list of 9-dimensional points
+
+        A `scale` term is used here to make things bigger, since it doesn't seem like the fitter really likes small things 
+    """
+
     _obj = open(os.path.join(os.path.dirname(__file__),"all_widths.json"), 'rt')
     data = json.load(_obj)
     _obj.close()
@@ -43,7 +51,7 @@ def get_ice_points():
         for entry in subdict:
             print(str(mode))
 
-    scale = 1
+    
 
     params = ["Amp", "Phs"]
     modes = [0,1,2,3,4]
@@ -54,6 +62,8 @@ def get_ice_points():
                 continue
             else:
                 all_widths.append(get_width(param, mode))
+
+    scale = 1/np.mean(all_widths)
 
     for subtype in data.keys():
         # we have Amp, Phs, and AmpPhs
@@ -68,10 +78,10 @@ def get_ice_points():
             
             if entry["param0"] == entry["param1"]:
                 # on-axis points 
-                point = basis_vectors[dimdict[prim_key]]*(entry["width"]+ entry["center"])
+                point = basis_vectors[dimdict[prim_key]]*(entry["width"]+ entry["center"])*scale
                 datapoints.append(point)
 
-                point = -1*basis_vectors[dimdict[prim_key]]*(entry["width"] - entry["center"])
+                point = -1*basis_vectors[dimdict[prim_key]]*(entry["width"] - entry["center"])*scale
                 datapoints.append(point)
             else:
                 # this is an amplitude/phase entry... so we need to go find scaling factors for both 
@@ -82,11 +92,11 @@ def get_ice_points():
 
                 # off-axis points are in term of sigmas, so we scale these up 
                 # one by Amp1 and the other by Phase3 
-                point = basis_0_scale*basis_vectors[dimdict[prim_key]]*(entry["width"] + entry["center"]) \
-                            + basis_1_scale*basis_vectors[dimdict[sec_key]]*(entry["width"] + entry["center"])
+                point = basis_0_scale*basis_vectors[dimdict[prim_key]]*(entry["width"] + entry["center"])*scale \
+                            + basis_1_scale*basis_vectors[dimdict[sec_key]]*(entry["width"] + entry["center"])*scale
                 datapoints.append(point)
 
-                point = -1*basis_0_scale*basis_vectors[dimdict[prim_key]]*(entry["width"] - entry["center"]) \
-                         - basis_1_scale*basis_vectors[dimdict[sec_key]]*(entry["width"] - entry["center"])
+                point = -1*basis_0_scale*basis_vectors[dimdict[prim_key]]*(entry["width"] - entry["center"])*scale \
+                         - basis_1_scale*basis_vectors[dimdict[sec_key]]*(entry["width"] - entry["center"])*scale
                 #datapoints.append(point)
     return datapoints

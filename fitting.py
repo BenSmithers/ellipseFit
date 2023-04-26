@@ -11,6 +11,8 @@ from scipy.optimize import minimize
 
 class EllipseFit:
     def __init__(self, point_list:list, use_previous_fit = True):
+        self._n_dim = len(point_list[0])
+
         self._datapoints = point_list
 
         # the ellipse represents the 1sigma contour for the likelihood distribution 
@@ -18,9 +20,9 @@ class EllipseFit:
         self._ellipse_rad = 50
 
         self.bounds = []
-        for i in range(9):
+        for i in range(self._n_dim): # 9
             self.bounds.append([1e-4, np.inf])
-        for i in range(36):
+        for i in range(int(self._n_dim*(self._n_dim-1)/2)):  # 36 
             self.bounds.append([0, 4*pi])
 
         self.options={
@@ -42,7 +44,7 @@ class EllipseFit:
             The fitter tries to find the rotation that puts all the points onto an ellipse whose axes go along the canonical X,Y,Z,W,W2,W3, etc axes
                 while also trying to find the magnitude for the ellipse along each of those axes 
         """
-        rotation_matrix = construct_rotation(thetas=params[9:], dim=9)
+        rotation_matrix = construct_rotation(thetas=params[self._n_dim:], dim=self._n_dim)
         sumLLH = 0.0
 
         # we now rotate the points we have according to the rotation matrix
@@ -52,7 +54,7 @@ class EllipseFit:
 
             # right now, doing the simple least-squares method.
             # TODO maybe try cauchy thingy 
-            sumLLH+= (np.sum((np.array(1./params[0:9])*rotated_point**2)) - self._ellipse_rad)**2
+            sumLLH+= (np.sum((np.array(1./params[0:self._n_dim])*rotated_point**2)) - self._ellipse_rad)**2
         return sumLLH
 
     def callback(self, paramset):
@@ -75,8 +77,8 @@ class EllipseFit:
             x0 = [(1+0.5*np.random.rand())*val for val in x0]
 
         else:
-            pars = [10.0 for i in range(9)]
-            rots = (1.0 + 0.2*np.random.rand(36)).tolist()
+            pars = [10.0 for i in range(self._n_dim)]
+            rots = (1.0 + 0.2*np.random.rand(int(self._n_dim*(self._n_dim-1)/2))).tolist()
             x0 = pars + rots
 
         result = minimize(self._minfunc, x0, bounds=self.bounds,tol=1e-20, callback = self.callback, options=self.options)
