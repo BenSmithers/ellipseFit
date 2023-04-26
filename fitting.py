@@ -101,14 +101,17 @@ class EllipseFit:
                 json.dump(new_data, _obj, indent=4)
                 _obj.close()
             else:
-                if new_data["value"] < data["value"]:
+                if (new_data["value"] < data["value"]) and result.success:
                     print("updating fit file!")
 
                     _obj = open(self._state_file, 'wt')
                     json.dump(new_data, _obj, indent=4)
                     _obj.close()
                 else:
-                    print("Worse fit... ")
+                    if not result.success:
+                        print("Failure!")
+                    else:
+                        print("Worse fit... ")
 
 
 if __name__=="__main__":
