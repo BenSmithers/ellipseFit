@@ -1,3 +1,7 @@
+"""
+Uses a fit result to construct a covariance matrix 
+"""
+
 import json
 import os
 import matplotlib.pyplot as plt 
