@@ -78,10 +78,10 @@ def get_ice_points():
             
             if entry["param0"] == entry["param1"]:
                 # on-axis points 
-                point = basis_vectors[dimdict[prim_key]]*(entry["width"]+ entry["center"])*scale
+                point = basis_vectors[dimdict[prim_key]]*(entry["width"])*scale
                 datapoints.append(point)
 
-                point = -1*basis_vectors[dimdict[prim_key]]*(entry["width"] - entry["center"])*scale
+                point = -1*basis_vectors[dimdict[prim_key]]*(entry["width"])*scale
                 datapoints.append(point)
             else:
                 # this is an amplitude/phase entry... so we need to go find scaling factors for both 
@@ -92,11 +92,11 @@ def get_ice_points():
 
                 # off-axis points are in term of sigmas, so we scale these up 
                 # one by Amp1 and the other by Phase3 
-                point = basis_0_scale*basis_vectors[dimdict[prim_key]]*(entry["width"] + entry["center"])*scale \
-                            + basis_1_scale*basis_vectors[dimdict[sec_key]]*(entry["width"] + entry["center"])*scale
+                point = basis_0_scale*basis_vectors[dimdict[prim_key]]*(entry["width"])*scale \
+                            + basis_1_scale*basis_vectors[dimdict[sec_key]]*(entry["width"] )*scale
                 datapoints.append(point)
 
-                point = -1*basis_0_scale*basis_vectors[dimdict[prim_key]]*(entry["width"] - entry["center"])*scale \
-                         - basis_1_scale*basis_vectors[dimdict[sec_key]]*(entry["width"] - entry["center"])*scale
+                point = -1*basis_0_scale*basis_vectors[dimdict[prim_key]]*(entry["width"] )*scale \
+                         - basis_1_scale*basis_vectors[dimdict[sec_key]]*(entry["width"])*scale
                 #datapoints.append(point)
     return datapoints
