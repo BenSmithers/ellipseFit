@@ -63,7 +63,7 @@ def get_ice_points():
             else:
                 all_widths.append(get_width(param, mode))
 
-    scale = 1/np.mean(all_widths)
+    scale = 1 # /np.mean(all_widths)
 
     for subtype in data.keys():
         # we have Amp, Phs, and AmpPhs
@@ -87,8 +87,8 @@ def get_ice_points():
                 # this is an amplitude/phase entry... so we need to go find scaling factors for both 
                 
                 # ie Amp1 Phase3
-                basis_0_scale = get_width(entry["param0"], entry["mode0"])  
-                basis_1_scale = get_width(entry["param1"], entry["mode1"])
+                basis_0_scale = 1# get_width(entry["param0"], entry["mode0"])  
+                basis_1_scale = 1# get_width(entry["param1"], entry["mode1"])
 
                 # off-axis points are in term of sigmas, so we scale these up 
                 # one by Amp1 and the other by Phase3 

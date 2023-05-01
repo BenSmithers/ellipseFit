@@ -6,6 +6,8 @@ from math import pi, log10
 import os 
 import json 
 
+from scipy.stats import chi2
+
 from scipy.optimize import minimize
 
 metrics = [
@@ -14,7 +16,7 @@ metrics = [
 ]
 
 class EllipseFit:
-    def __init__(self, point_list:list, use_previous_fit = True, minfunc = "cauchy"):
+    def __init__(self, point_list:list, use_previous_fit = True, minfunc = "cauchy", statefile=""):
         
         if minfunc not in metrics:
             raise ValueError("Unfamiliar LLH metric '{}'".format(minfunc))
@@ -31,8 +33,7 @@ class EllipseFit:
 
         # the ellipse represents the 1sigma contour for the likelihood distribution 
         # this 50 comes from ~45 DOF 1sigma  - might not be right 
-        self._ellipse_rad = 50
-
+        self._ellipse_rad = 1
 
 
         self.bounds = []
@@ -44,7 +45,8 @@ class EllipseFit:
             But there really needed to be a smooth transition around the edges from 2pi->0 (and vice versa)
             Otherwise the fitter can fall down the wrong side of some likelihood bump for that angle. Not good! 
             """
-            self.bounds.append([-np.inf, np.inf]) # angles! 
+            self.bounds.append([-2*pi, 2*pi])
+            #self.bounds.append([-np.inf, np.inf]) # angles! 
 
         self.options={
             'maxiter':1e8,
@@ -55,7 +57,10 @@ class EllipseFit:
             'eps':1e-20
         }
 
-        self._state_file = os.path.join(os.path.dirname(__file__), "ellipse_state.json")
+        if statefile == "":
+            self._state_file = os.path.join(os.path.dirname(__file__), "ellipse_state.json")
+        else:
+            self._state_file = statefile
 
         self._count = 0
         self._use_previous = use_previous_fit
@@ -75,9 +80,6 @@ class EllipseFit:
         # if the rotation angle is just right, it will have the points all lie on the ellipse that goes along the axes 
         for point in self._datapoints:
             rotated_point = np.matmul(rotation_matrix, point)
-
-            # right now, doing the simple least-squares method.
-            # TODO maybe try cauchy thingy 
             sumLLH+= (np.sum((np.array(1./params[0:self._n_dim])*rotated_point**2)) - self._ellipse_rad)**2
         return sumLLH
 
@@ -96,9 +98,6 @@ class EllipseFit:
         # if the rotation angle is just right, it will have the points all lie on the ellipse that goes along the axes 
         for point in self._datapoints:
             rotated_point = np.matmul(rotation_matrix, point)
-
-            # right now, doing the simple least-squares method.
-            # TODO maybe try cauchy thingy 
             sumLLH+= log10(1 + (np.sum((np.array(1./params[0:self._n_dim])*rotated_point**2)) - self._ellipse_rad)**2)
         return sumLLH
 
@@ -161,7 +160,11 @@ class EllipseFit:
                     else:
                         print("Worse fit... ")
 
+        _obj = open(self._state_file, 'rt')
+        data  = json.load(_obj)
+        _obj.close()
+        return data["params"]
 
 if __name__=="__main__":
-    fitter = EllipseFit(get_ice_points(), True)
+    fitter = EllipseFit(get_ice_points(), True, minfunc="least_sq")
     fitter.minimize(10)
