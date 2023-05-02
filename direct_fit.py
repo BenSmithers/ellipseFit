@@ -9,7 +9,7 @@ Then we allow a fit to run on those 45 parameters, while comparing the LLHs we g
 
 import numpy as np
 import os 
-from math import pi, sqrt
+from math import pi, sqrt, log10
 import json 
 
 from scipy.optimize import minimize
@@ -93,30 +93,27 @@ def extract(filename, amp_scales, pha_scales):
             else:
                 raise Exception(param)
 
-            scale_factor = 1.0
-
             split = mode_pair.split("_")
             if len(split) == 1:
                 mode0 = split[0]
-                mode1 = split[0]
-                width0 = 1.0
-                width1 = 1.0
+                mode1 = split[0] # no, this is accurate... they're the same 
+                rescale0 = 1.0
+                rescale1 = 1.0
             else:
                 mode0 = split[0]
                 mode1= split[1]
 
                 if t0=="Amp":
-                    width0 = amp_scales[int(mode0)]
+                    rescale0 = amp_scales[int(mode0)]
                 else:
-                    width0 = pha_scales[int(mode0)-1]
+                    rescale0 = pha_scales[int(mode0)-1]
                 if t1=="Amp":
-                    width1 = amp_scales[int(mode1)]
+                    rescale1 = amp_scales[int(mode1)]
                 else:
-                    width1 = pha_scales[int(mode1)-1]
+                    rescale1 = pha_scales[int(mode1)-1]
 
-            orgvals[0]*=scale_factor
-
-            mask = orgvals[1]<10
+            # large dLLH values can get weird
+            mask = orgvals[1]<6
 
             parameter_values = orgvals[0][mask]
             cut_llhs = orgvals[1][mask]
@@ -131,7 +128,7 @@ def extract(filename, amp_scales, pha_scales):
             index1 = dimdict[key1]
 
             for i in range(len(cut_llhs)):
-                all_points.append( parameter_values[i]*(width0*unit_vectors[index0] + width1*unit_vectors[index1])/rtwo )
+                all_points.append( parameter_values[i]*(rescale0*unit_vectors[index0] + rescale1*unit_vectors[index1])/rtwo )
                 all_llhs.append( cut_llhs[i] ) 
     return all_points, all_llhs
 
@@ -185,7 +182,7 @@ def build_cholesky_style(*params)->np.ndarray:
     return np.matmul(ld, ld.transpose())/1000.
 
 count = 0
-def fit_cov():
+def fit_cov(nudge=False):
     """
         We wish to find the covariance matrix that assiciates the vectors with the likelhoods we get from the thing 
     """
@@ -209,7 +206,18 @@ def fit_cov():
         matrix= build_cholesky_style(*mat_params)
         out  = 0.0
         for i in range(len(points)):
-            out += abs(np.linalg.multi_dot([np.transpose(points[i]), matrix, points[i]]) - log_likelihoods[i])**2
+            out += (np.linalg.multi_dot([np.transpose(points[i]), matrix, points[i]]) - log_likelihoods[i])**2
+        return out 
+    
+    def nudge_func(mat_params)->float:
+        """
+            TODO: need to optimize this stuff... 
+            If there's a way to matrix multiply vectors of vectors I'd love to know it 
+        """
+        matrix= build_cholesky_style(*mat_params)
+        out  = 0.0
+        for i in range(len(points)):
+            out += log10(1 + (np.linalg.multi_dot([np.transpose(points[i]), matrix, points[i]]) - log_likelihoods[i])**2)
         return out 
     
     if os.path.exists(FIT_FILE):
@@ -219,7 +227,7 @@ def fit_cov():
 
         x0 = np.array(data["fit"])
         prefit_val = data["llh"]
-        x0*= 1.0 + 0.1*np.random.randn(len(x0))
+        x0*= 1.0 + (0.0 if nudge else 0.1)*np.random.randn(len(x0))
 
     else:
         prefit_val = np.inf
@@ -235,7 +243,7 @@ def fit_cov():
             'eps':1e-20
         }
     
-    result = minimize(minfunc, x0,bounds=bounds, options=options, callback=callback)
+    result = minimize(nudge_func if nudge else minfunc, x0,bounds=bounds, options=options, callback=callback)
 
     value = minfunc(result.x)
     if value<prefit_val:
@@ -281,7 +289,6 @@ def load_res():
     _obj.close()
 
     x0 = np.array(data["fit"])
-    prefit_val = data["llh"]
     make_plot_for_params(x0)
 
 def make_plot_for_params(fitpar):
@@ -303,6 +310,18 @@ def make_plot_for_params(fitpar):
     plt.savefig(os.path.join(os.path.dirname(__file__),"plots", "choleskycov.png"),dpi=400)
     plt.show()
 
-fit_cov()
+if __name__=="__main__":
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+
+    parser.add_argument("--nudge", action="store_true", default=False,
+                help="Use after running a fit. Uses a cauchy thing to relax penalties from far-off points.")
+    options = parser.parse_args()
+    nudge= options.nudge 
+
+    print("Nudge mode: {}".format(nudge))
+
+    fit_cov(nudge)
+
 #test()
 #load_res()
