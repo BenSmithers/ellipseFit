@@ -11,10 +11,35 @@ import numpy as np
 import os 
 from math import pi, sqrt, log10
 import json 
-
+from scipy.linalg import expm, norm 
 from scipy.optimize import minimize
 
 FIT_FILE = os.path.join(os.path.dirname(__file__), "choleksky_fit.json")
+
+_obj = open(os.path.join(os.path.dirname(__file__), "all_widths.json"),'rt')
+width_dict = json.load(_obj)
+_obj.close()
+
+def get_shift(param0, param1, mode0, mode1):
+    if mode0==mode1 and param0==param1:
+        subdict = width_dict[param0]
+    else:
+        subdict = width_dict["AmpPhs"]
+
+    for entry in subdict:
+        if param0==entry["param0"] and param1==entry["param1"] or \
+            param1==entry["param0"] and param0==entry["param1"] :
+            if mode0==entry["mode0"] and mode1==entry["mode1"] or \
+                mode1==entry["mode0"] and mode0==entry["mode1"]:
+        
+                return entry["center"]
+    print(type(mode0))
+
+    print(subdict)
+    print(mode0 ,mode1, param0, param1)
+
+    raise Exception()
+
 
 dimdict = {
     'Amp0'   :     0,
@@ -31,6 +56,30 @@ dimdict = {
 unit_vectors = np.diag(np.ones(9))
 
 rtwo = sqrt(2)
+
+def get_width(param, mode):
+    subdict = width_dict[param]
+    for entry in subdict:
+        if str(mode).lower()==entry["mode0"]:
+            return entry["width"]
+    
+    for entry in subdict:
+        print(str(mode))
+
+param_types = ["Amp", "Phs"]
+modes = [0,1,2,3,4]
+all_widths = []
+for param in param_types:
+    for mode in modes:
+        if param=="Phs" and mode==0:
+            continue
+        all_widths.append( get_width(param, mode) )
+all_widths = np.array(all_widths)
+
+scale_mat = np.zeros(shape=(9,9))
+for i in range(9):
+    for j in range(9):
+        scale_mat[i][j] =all_widths[i]*all_widths[j]
 
 def extract(filename, amp_scales, pha_scales):
     """
@@ -61,17 +110,15 @@ def extract(filename, amp_scales, pha_scales):
             mask = np.logical_and(param==paramset, mode_pair==mode_str)
             # here, so now we have a mask that gets all the LLH and shifts for a given param/mode combo 
 
-
-            these_shifts = shift_vals[mask]
-            unique_shifts =np.unique(these_shifts)
-
+            these_shifts  = shift_vals[mask]
+            unique_shifts = np.unique(these_shifts)
             
             # sum up the LLH per-DOM for each shift value 
             net_llhs = []
             
             for shift in unique_shifts:
                 these_llhs = llhs[np.logical_and(mask, shift_vals==shift)]
-                net_llhs.append(np.sum(these_llhs.astype(float)*scaleval/len(these_llhs.astype(float))) )
+                net_llhs.append(np.sum(these_llhs.astype(float)*scaleval/len(these_llhs.astype(float))) ) # 
 
             # makes the fitting easier since we don't have to care about the prefactors (wooo)
             # we use the \Delta LLH metric 
@@ -97,11 +144,12 @@ def extract(filename, amp_scales, pha_scales):
             if len(split) == 1:
                 mode0 = split[0]
                 mode1 = split[0] # no, this is accurate... they're the same 
-                rescale0 = 1.0
-                rescale1 = 1.0
+                rescale0 = 0.5
+                rescale1 = 0.5
             else:
                 mode0 = split[0]
                 mode1= split[1]
+                
 
                 if t0=="Amp":
                     rescale0 = amp_scales[int(mode0)]
@@ -111,6 +159,8 @@ def extract(filename, amp_scales, pha_scales):
                     rescale1 = amp_scales[int(mode1)]
                 else:
                     rescale1 = pha_scales[int(mode1)-1]
+                rescale0*=1/rtwo
+                rescale1*=1/rtwo
 
             # large dLLH values can get weird
             mask = orgvals[1]<6
@@ -121,6 +171,8 @@ def extract(filename, amp_scales, pha_scales):
             key0 = t0+mode0
             key1 = t1+mode1 
 
+            reshift = get_shift(t0, t1, mode0, mode1)
+
             if int(mode0)>4 or int(mode1)>4:
                 continue
 
@@ -128,7 +180,7 @@ def extract(filename, amp_scales, pha_scales):
             index1 = dimdict[key1]
 
             for i in range(len(cut_llhs)):
-                all_points.append( parameter_values[i]*(rescale0*unit_vectors[index0] + rescale1*unit_vectors[index1])/rtwo )
+                all_points.append( (parameter_values[i]-reshift)*(rescale0*unit_vectors[index0] + rescale1*unit_vectors[index1]) )
                 all_llhs.append( cut_llhs[i] ) 
     return all_points, all_llhs
 
@@ -151,7 +203,11 @@ def get_all_points()->'tuple[np.ndarray, np.ndarray]':
     _obj.close()
 
     amp_widths = [entry["width"] for entry in data["Amp"]]
+    amp_widths = [amp_widths[-1],] + amp_widths[:-1]
     pha_widhts = [entry["width"] for entry in data["Phs"]]
+
+    modes = [entry["mode0"] for entry in data["Amp"]]
+    modes = [modes[-1],] + modes[:-1]
 
     all_points = []
     all_llhs = []
@@ -163,7 +219,7 @@ def get_all_points()->'tuple[np.ndarray, np.ndarray]':
         all_points += pts
         all_llhs += llhs
 
-    return all_points, all_llhs
+    return np.array(all_points), np.array(all_llhs)
 
 
 def build_cholesky_style(*params)->np.ndarray:
@@ -179,7 +235,7 @@ def build_cholesky_style(*params)->np.ndarray:
     dim = 9 
     ld = np.zeros(shape=(dim, dim))
     ld[np.tril_indices(9,)] = params
-    return np.matmul(ld, ld.transpose())/1000.
+    return np.dot(ld, ld.transpose())
 
 count = 0
 def fit_cov(nudge=False):
@@ -204,10 +260,12 @@ def fit_cov(nudge=False):
             If there's a way to matrix multiply vectors of vectors I'd love to know it 
         """
         matrix= build_cholesky_style(*mat_params)
-        out  = 0.0
-        for i in range(len(points)):
-            out += (np.linalg.multi_dot([np.transpose(points[i]), matrix, points[i]]) - log_likelihoods[i])**2
-        return out 
+        n_points, dim = points.shape
+        _points = points.reshape(n_points, 1, dim)
+
+        result = np.matmul(np.matmul(_points, matrix), _points.transpose(0, 2, 1)).flatten()
+        out = (0.5*result - log_likelihoods)**2
+        return np.sum(out) 
     
     def nudge_func(mat_params)->float:
         """
@@ -215,23 +273,28 @@ def fit_cov(nudge=False):
             If there's a way to matrix multiply vectors of vectors I'd love to know it 
         """
         matrix= build_cholesky_style(*mat_params)
-        out  = 0.0
-        for i in range(len(points)):
-            out += log10(1 + (np.linalg.multi_dot([np.transpose(points[i]), matrix, points[i]]) - log_likelihoods[i])**2)
-        return out 
+
+        n_points, dim = points.shape
+        _points = points.reshape(n_points, 1, dim)
+
+        result = np.matmul(np.matmul(_points, matrix), _points.transpose(0, 2, 1)).flatten()
+        out = np.log10( 1 + (0.5*result - log_likelihoods)**2)
+        return np.sum(out )
     
-    if os.path.exists(FIT_FILE):
+    if False : # os.path.exists(FIT_FILE):
+        print("Loading old fit")
         _obj = open(FIT_FILE, 'rt')
         data = json.load(_obj)
         _obj.close()
 
         x0 = np.array(data["fit"])
+        print("Prefit value {}".format(data["llh"]))
         prefit_val = data["llh"]
-        x0*= 1.0 + (0.0 if nudge else 0.1)*np.random.randn(len(x0))
+        x0*= 1.0 + (0.01 if nudge else 0.2)*np.random.randn(len(x0))
 
     else:
         prefit_val = np.inf
-        x0 = 1.0+np.random.randn(45)*0.01
+        x0 = 1.0 + np.random.randn(45)*2.0
     
     bounds = [(-np.inf, np.inf) for i in range(45)]
 
@@ -247,38 +310,60 @@ def fit_cov(nudge=False):
 
     value = minfunc(result.x)
     if value<prefit_val:
+        print("Better fit! {} ".format(value))
         _obj = open(FIT_FILE,'wt')
         json.dump({
             "fit":result.x.tolist(),
             "llh":value
         },_obj, indent=4)
         _obj.close()
+        
+        
+        #hess = build_cholesky_style(result.x)
+        
+        cor = construct_from_params(result.x)
+        print(cor)
 
+        keylist = list(dimdict.keys())
+        outdict = {}
+        # now we build the dictionary (yay)
+        for i in range(9):
+            outdict[keylist[i].lower()] = {}
+            for j in range(9):
+                outdict[keylist[i].lower()][keylist[j].lower()] = cor[i][j]
+
+        print("Correlation matrix determinant {}".format(np.linalg.det(cor)))
+
+        _obj= open(os.path.join(os.path.dirname(__file__), "ice_covariance.json"), 'wt')
+        json.dump(outdict, _obj, indent=4)
+        _obj.close()
+
+        make_plot_for_params(result.x)
+
+        return True
+
+    print("Worse plot...")
     print(result)
-    make_plot_for_params(result.x)
 
-    covar = build_cholesky_style(result.x)
-    cor = np.zeros_like(covar)
+    return False
 
+def construct_from_params(params):
+    hess =  build_cholesky_style(*params)
+
+    nuisance_hessian = np.zeros_like(hess)
     for i in range(9):
         for j in range(9):
-            cor[i][j] = (covar[i][j]**2)/(covar[i][i]*covar[j][j])
+            nuisance_hessian[i][j] = (hess[i][j])/sqrt(hess[i][i]*hess[j][j])
 
-    keylist = list(dimdict.keys())
-    outdict = {}
-    # now we build the dictionary (yay)
+    sad_inv = np.linalg.inv(nuisance_hessian)
+
+    cor = np.ones_like(sad_inv)
     for i in range(9):
-        outdict[keylist[i].lower()] = {}
         for j in range(9):
-            outdict[keylist[i].lower()][keylist[j].lower()] = cor[i][j]
+            cor[i][j] = sad_inv[i][j]/sqrt(sad_inv[i][i]*sad_inv[j][j])
 
-    print("Correlation matrix determinant {}".format(np.linalg.det(cor)))
+    return nuisance_hessian 
 
-    _obj= open(os.path.join(os.path.dirname(__file__), "ice_covariance.json"), 'wt')
-    json.dump(outdict, _obj, indent=4)
-    _obj.close()
-
-    return result.x
 
 def load_res():
     """
@@ -297,16 +382,16 @@ def make_plot_for_params(fitpar):
     """
     import matplotlib.pyplot as plt 
 
-    covar = build_cholesky_style(*fitpar)
-    cor = np.zeros_like(covar)
+    cor = construct_from_params(fitpar)
 
-    for i in range(9):
-        for j in range(9):
-            cor[i][j] = (covar[i][j]**2)/(covar[i][i]*covar[j][j])
-    
-
-    plt.pcolormesh(range(9), range(9), cor, vmin=-1, vmax=1, cmap="coolwarm")
-    cbar = plt.colorbar()
+    fig, axes = plt.subplots()
+    mesh = axes.pcolormesh(range(9), range(9), cor, vmin=-1, vmax=1, cmap='RdBu')
+    axes.set_xticks(range(9), labels=dimdict.keys(), rotation=45)
+    axes.set_yticks(range(9), labels=dimdict.keys())
+    axes.hlines(y=4.5, xmin=-0.5, xmax=8.5, colors='k', linestyles='--')
+    axes.vlines(x=4.5, ymin=-0.5, ymax=8.5, colors='k', linestyles='--')
+    plt.colorbar(mesh)
+    plt.tight_layout()
     plt.savefig(os.path.join(os.path.dirname(__file__),"plots", "choleskycov.png"),dpi=400)
     plt.show()
 
@@ -321,7 +406,9 @@ if __name__=="__main__":
 
     print("Nudge mode: {}".format(nudge))
 
-    fit_cov(nudge)
+    while not fit_cov(nudge):
+        continue
+        
 
 #test()
 #load_res()
