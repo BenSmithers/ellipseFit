@@ -14,6 +14,8 @@ import json
 from scipy.linalg import expm, norm 
 from scipy.optimize import minimize
 
+import matplotlib.pyplot as plt 
+
 FIT_FILE = os.path.join(os.path.dirname(__file__), "choleksky_fit.json")
 
 _obj = open(os.path.join(os.path.dirname(__file__), "all_widths.json"),'rt')
@@ -51,6 +53,18 @@ dimdict = {
     "Phs2"   :     6,
     "Phs3"   :     7,
     "Phs4"   :     8
+}
+
+keylist_out = {
+    'Amp00'   :     0,
+    "Amp01"   :     1,
+    "Amp02"   :     2,
+    "Amp03"   :     3,
+    "Amp04"   :     4,
+    "phase01"   :     5,
+    "phase02"   :     6,
+    "phase03"   :     7,
+    "phase04"   :     8
 }
 
 unit_vectors = np.diag(np.ones(9))
@@ -256,8 +270,10 @@ def fit_cov(nudge=False):
 
     def minfunc(mat_params)->float:
         """
-            TODO: need to optimize this stuff... 
-            If there's a way to matrix multiply vectors of vectors I'd love to know it 
+            Calculates the llh values you'd get for our set of points given the covariance matrix described by the given params 
+            It then sums the differences between those calculated llh's and the measured llh's squared
+
+            NOTE: this _techincally_ builds the Hessian, which is the inverse of th covariance matrix!
         """
         matrix= build_cholesky_style(*mat_params)
         n_points, dim = points.shape
@@ -267,10 +283,15 @@ def fit_cov(nudge=False):
         out = (0.5*result - log_likelihoods)**2
         return np.sum(out) 
     
+
+    C = 1
     def nudge_func(mat_params)->float:
         """
-            TODO: need to optimize this stuff... 
-            If there's a way to matrix multiply vectors of vectors I'd love to know it 
+            Calculates the llh values you'd get for our set of points given the covariance matrix described by the given params. 
+            It then sums the differences between those calculated llh's and the measured llh's squared
+            and then applies the cauchy robust loss function to account for outliers 
+
+            NOTE: this _techincally_ builds the Hessian, which is the inverse of th covariance matrix!
         """
         matrix= build_cholesky_style(*mat_params)
 
@@ -278,10 +299,24 @@ def fit_cov(nudge=False):
         _points = points.reshape(n_points, 1, dim)
 
         result = np.matmul(np.matmul(_points, matrix), _points.transpose(0, 2, 1)).flatten()
-        out = np.log10( 1 + (0.5*result - log_likelihoods)**2)
+        out = np.log10( 1 + 0.5*((0.5*result - log_likelihoods)/C)**2)
         return np.sum(out )
     
-    if False : # os.path.exists(FIT_FILE):
+    def nudge_func_nosum(mat_params)->float:
+        """
+            Same as the above "nudge function", but it does not apply the sum
+            This is useful for searching for outliers 
+        """
+        matrix= build_cholesky_style(*mat_params)
+
+        n_points, dim = points.shape
+        _points = points.reshape(n_points, 1, dim)
+
+        result = np.matmul(np.matmul(_points, matrix), _points.transpose(0, 2, 1)).flatten()
+        out = np.log10( 1 + 0.5*((0.5*result - log_likelihoods)/C)**2)
+        return out 
+    
+    if False: # os.path.exists(FIT_FILE):
         print("Loading old fit")
         _obj = open(FIT_FILE, 'rt')
         data = json.load(_obj)
@@ -290,13 +325,12 @@ def fit_cov(nudge=False):
         x0 = np.array(data["fit"])
         print("Prefit value {}".format(data["llh"]))
         prefit_val = data["llh"]
-        x0*= 1.0 + (0.01 if nudge else 0.2)*np.random.randn(len(x0))
 
     else:
         prefit_val = np.inf
         x0 = 1.0 + np.random.randn(45)*2.0
     
-    bounds = [(-np.inf, np.inf) for i in range(45)]
+    bounds =[(-np.inf, np.inf) for i in range(45)]
 
     options={
             'maxiter':1e8,
@@ -309,28 +343,46 @@ def fit_cov(nudge=False):
     result = minimize(nudge_func if nudge else minfunc, x0,bounds=bounds, options=options, callback=callback)
 
     value = minfunc(result.x)
-    if value<prefit_val:
+
+    if True: # value<prefit_val:
         print("Better fit! {} ".format(value))
-        _obj = open(FIT_FILE,'wt')
-        json.dump({
-            "fit":result.x.tolist(),
-            "llh":value
-        },_obj, indent=4)
-        _obj.close()
         
         
         #hess = build_cholesky_style(result.x)
         
         cor = construct_from_params(result.x)
-        print(cor)
 
-        keylist = list(dimdict.keys())
+        eigenvals, inv_t = np.linalg.eig(cor)
+
+        trans_vec = np.zeros_like(eigenvals)
+
+        trans_vec[eigenvals < 1e-10] = 1.0
+        
+        if np.sum(trans_vec)!=0.0:
+            print(eigenvals[eigenvals < 1e-10])
+            print(trans_vec)
+            new_axis = np.matmul(trans_vec, inv_t)
+            new_axis /= np.sum(np.sqrt(new_axis**2))
+            print(print_vec(new_axis))
+
+        keylist = list(keylist_out.keys())
         outdict = {}
         # now we build the dictionary (yay)
         for i in range(9):
             outdict[keylist[i].lower()] = {}
             for j in range(9):
                 outdict[keylist[i].lower()][keylist[j].lower()] = cor[i][j]
+
+        _obj = open(FIT_FILE,'wt')
+        json.dump({
+            "fit":result.x.tolist(),
+            "llh":value,
+            #"flat_dir":new_axis.tolist(),
+            "all_points": nudge_func_nosum(result.x).tolist()
+        },_obj, indent=4)
+        _obj.close()
+        
+        make_point_llh_dist(nudge_func_nosum(result.x).tolist())
 
         print("Correlation matrix determinant {}".format(np.linalg.det(cor)))
 
@@ -339,6 +391,8 @@ def fit_cov(nudge=False):
         _obj.close()
 
         make_plot_for_params(result.x)
+        make_plot_for_params(result.x, True)
+        
 
         return True
 
@@ -347,22 +401,74 @@ def fit_cov(nudge=False):
 
     return False
 
-def construct_from_params(params):
+def make_point_llh_dist(points):
+    lpoints=points
+    bins = np.logspace(-5,1, 50)
+
+    binoccu = np.histogram(lpoints, bins)[0]
+    plt.figure()
+    plt.stairs(binoccu, bins)
+    plt.xlabel(r"$\Delta$LLH",size=14)
+    plt.xscale('log')
+    plt.ylabel("Points in Bin")
+    plt.tight_layout()
+    plt.savefig(os.path.join(os.path.dirname(__file__),"plots", "metahist.png"),dpi=400)
+    plt.close()
+
+def print_vec(vec):
+    out = ""
+    for i, val in enumerate(vec):
+        if i>4:
+            param="Pha"
+            mode = i-4
+        else:
+            param = "Amp"
+            mode = i
+        out+="{}{} = {}\n".format(param, mode, val)
+    return out
+
+def construct_from_params(params, get_hess=False):
     hess =  build_cholesky_style(*params)
 
     nuisance_hessian = np.zeros_like(hess)
     for i in range(9):
         for j in range(9):
             nuisance_hessian[i][j] = (hess[i][j])/sqrt(hess[i][i]*hess[j][j])
+    if get_hess:
+        return nuisance_hessian
+    eigenvals, inv_t = np.linalg.eig(nuisance_hessian)
 
-    sad_inv = np.linalg.inv(nuisance_hessian)
+    transformation = np.transpose(inv_t)
 
-    cor = np.ones_like(sad_inv)
+    trans_vec = np.zeros_like(eigenvals)
+
+    eps = 1e-8
+    mask = eigenvals>eps
+    not_mask = np.logical_not(mask)
+
+    trans_vec[mask] = eigenvals[mask]
+
+    trans_vec[not_mask] = np.min(eigenvals[mask])*10
+
+
+    a_matrix = np.diag(trans_vec)
+    # a_matrix = np.linalg.inv(__matrix)
+
+    sigma = np.matmul(inv_t, np.matmul(a_matrix, transformation))
+    sigma = np.linalg.inv(sigma)
+
+    cor = np.ones_like(sigma)
     for i in range(9):
         for j in range(9):
-            cor[i][j] = sad_inv[i][j]/sqrt(sad_inv[i][i]*sad_inv[j][j])
+            cor[i][j] = sigma[i][j]/sqrt(sigma[i][i]*sigma[j][j])
 
-    return nuisance_hessian 
+    cov = np.ones_like(sigma)
+    for i in range(9):
+        for j in range(9):
+            cov[i][j] = cor[i][j]*all_widths[i]*all_widths[j]
+
+    return cor
+
 
 
 def load_res():
@@ -376,23 +482,23 @@ def load_res():
     x0 = np.array(data["fit"])
     make_plot_for_params(x0)
 
-def make_plot_for_params(fitpar):
+def make_plot_for_params(fitpar, do_hess=False):
     """
         When provided the fit parameters, maeks a plot
     """
-    import matplotlib.pyplot as plt 
-
-    cor = construct_from_params(fitpar)
-
+    
+    cor = construct_from_params(fitpar, do_hess)
+    scale = np.max(np.abs(cor))
     fig, axes = plt.subplots()
-    mesh = axes.pcolormesh(range(9), range(9), cor, vmin=-1, vmax=1, cmap='RdBu')
+    mesh = axes.pcolormesh(range(9), range(9), cor, vmin=-scale, vmax=scale, cmap='RdBu')
     axes.set_xticks(range(9), labels=dimdict.keys(), rotation=45)
     axes.set_yticks(range(9), labels=dimdict.keys())
     axes.hlines(y=4.5, xmin=-0.5, xmax=8.5, colors='k', linestyles='--')
     axes.vlines(x=4.5, ymin=-0.5, ymax=8.5, colors='k', linestyles='--')
     plt.colorbar(mesh)
     plt.tight_layout()
-    plt.savefig(os.path.join(os.path.dirname(__file__),"plots", "choleskycov.png"),dpi=400)
+    name = "hessian.png" if do_hess else "covariance.png"
+    plt.savefig(os.path.join(os.path.dirname(__file__),"plots", name),dpi=400)
     plt.show()
 
 if __name__=="__main__":
@@ -406,9 +512,7 @@ if __name__=="__main__":
 
     print("Nudge mode: {}".format(nudge))
 
-    while not fit_cov(nudge):
-        continue
-        
+    fit_cov(nudge)        
 
 #test()
 #load_res()
